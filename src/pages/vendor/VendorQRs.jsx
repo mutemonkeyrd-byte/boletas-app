@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { syncQR } from '../../lib/sheets'
 import { fmtMoney } from '../../lib/utils'
 import { Badge, UnlockWarningModal, EmptyState, Spinner, showToast } from '../../components/shared/UI'
-import { Lock, Unlock, AlertTriangle, ChevronRight } from 'lucide-react'
+import { Lock, Unlock, AlertTriangle, ChevronRight, FileText, MessageCircle, Mail, Copy } from 'lucide-react'
 import clsx from 'clsx'
 
 export default function VendorQRs() {
@@ -162,17 +162,9 @@ export default function VendorQRs() {
                 delivered && 'border-brand-green/30',
               )}>
                 <div className="flex items-center gap-3">
-                  {/* QR Thumbnail */}
-                  <div className="relative w-14 h-14 rounded-xl overflow-hidden bg-white flex-shrink-0">
-                    {qr.qr_image_url ? (
-                      <img src={qr.qr_image_url} alt="QR"
-                        className={clsx('w-full h-full object-contain transition-all duration-700',
-                          locked ? 'qr-locked' : 'qr-unlocked')} />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center bg-brand-surface">
-                        <span className="text-xl">🎟</span>
-                      </div>
-                    )}
+                  {/* Ticket Thumbnail */}
+                  <div className="relative w-14 h-14 rounded-xl overflow-hidden bg-brand-surface flex items-center justify-center flex-shrink-0">
+                    <FileText size={22} className={locked ? 'text-brand-subtle' : 'text-brand-violet'} />
                     {locked && (
                       <div className="absolute inset-0 flex items-center justify-center"
                         style={{ background: 'rgba(10,10,15,0.5)' }}>
@@ -185,7 +177,7 @@ export default function VendorQRs() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between mb-1">
                       <p className="text-sm font-semibold text-brand-text">
-                        {locked ? 'QR Bloqueado' : `QR ${unlocked ? 'Activo ⚡' : sold ? 'Vendido ✓' : 'Entregado ✓'}`}
+                        {locked ? 'Ticket Bloqueado' : `Ticket ${unlocked ? 'Activo ⚡' : sold ? 'Vendido ✓' : 'Entregado ✓'}`}
                       </p>
                       <Badge estado={qr.estado} />
                     </div>
@@ -207,19 +199,38 @@ export default function VendorQRs() {
                   )}
                 </div>
 
-                {/* Expanded QR for unlocked */}
-                {unlocked && qr.qr_image_url && (
-                  <div className="mt-3 pt-3 border-t border-brand-border/30">
-                    <p className="text-xs text-brand-muted mb-2 text-center">Muestra este QR a tu cliente:</p>
-                    <div className="flex justify-center">
-                      <div className="w-48 h-48 bg-white rounded-xl overflow-hidden p-1">
-                        <img src={qr.qr_image_url} alt="QR" className="w-full h-full object-contain" />
+                {/* Share buttons for unlocked ticket */}
+                {!locked && qr.ticket_pdf_url && (
+                  <div className="mt-3 pt-3 border-t border-brand-border/30 space-y-2">
+                    <a href={qr.ticket_pdf_url} target="_blank" rel="noopener noreferrer"
+                       className="flex items-center justify-center gap-2 text-xs font-semibold py-2.5 px-3 rounded-xl w-full transition-all active:scale-[0.98]"
+                       style={{ background: 'rgba(124,58,237,0.12)', border: '1px solid rgba(124,58,237,0.25)', color: '#A78BFA' }}>
+                      <FileText size={14} /> Ver ticket PDF
+                    </a>
+                    <div className="grid grid-cols-3 gap-2">
+                      <a href={`https://wa.me/?text=${encodeURIComponent('🎟 Aquí está tu ticket del evento' + (ev?.nombre ? ' "' + ev.nombre + '"' : '') + ':\n\n' + qr.ticket_pdf_url)}`}
+                         target="_blank" rel="noopener noreferrer"
+                         className="flex items-center justify-center gap-1.5 text-xs font-semibold py-2.5 rounded-xl transition-all active:scale-[0.98]"
+                         style={{ background: 'rgba(37,211,102,0.12)', border: '1px solid rgba(37,211,102,0.3)', color: '#25D366' }}>
+                        <MessageCircle size={13} /> WhatsApp
+                      </a>
+                      <a href={`mailto:?subject=${encodeURIComponent('Tu ticket' + (ev?.nombre ? ' — ' + ev.nombre : ''))}&body=${encodeURIComponent('Hola, aquí está tu ticket:\n\n' + qr.ticket_pdf_url + '\n\n— ' + (profile?.nombre_completo || ''))}`}
+                         className="flex items-center justify-center gap-1.5 text-xs font-semibold py-2.5 rounded-xl transition-all active:scale-[0.98]"
+                         style={{ background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.3)', color: '#60A5FA' }}>
+                        <Mail size={13} /> Correo
+                      </a>
+                      <button onClick={async () => { try { await navigator.clipboard.writeText(qr.ticket_pdf_url); showToast('✓ Link copiado', 'success') } catch { showToast('No se pudo copiar', 'error') } }}
+                         className="flex items-center justify-center gap-1.5 text-xs font-semibold py-2.5 rounded-xl transition-all active:scale-[0.98]"
+                         style={{ background: 'rgba(156,163,175,0.12)', border: '1px solid rgba(156,163,175,0.25)', color: '#D1D5DB' }}>
+                        <Copy size={13} /> Copiar
+                      </button>
+                    </div>
+                    {unlocked && (
+                      <div className="rounded-xl p-2 text-center text-[10px] text-brand-orange"
+                        style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)' }}>
+                        ⚡ Ticket activo — reporta el pago en la tab de Pagos
                       </div>
-                    </div>
-                    <div className="mt-2 rounded-xl p-2 text-center text-[10px] text-brand-orange"
-                      style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)' }}>
-                      ⚡ QR activo — reporta el pago en la tab de Pagos
-                    </div>
+                    )}
                   </div>
                 )}
               </div>

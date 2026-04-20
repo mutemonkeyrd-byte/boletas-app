@@ -1,9 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
-import { extractQRsFromPDF, dataURLToBlob } from '../../lib/qrExtractor'
 import { fmtDate } from '../../lib/utils'
 import { Card, CardHeader, Badge, QRCard, Modal, Field, EmptyState, Spinner, showToast } from '../../components/shared/UI'
-import { Upload, QrCode, Plus, RefreshCw, Users } from 'lucide-react'
+import { Upload, QrCode, Plus, RefreshCw, Users, FileText } from 'lucide-react'
 import clsx from 'clsx'
 
 export default function AdminQRCodes() {
@@ -44,68 +43,59 @@ export default function AdminQRCodes() {
   }
 
   async function handlePDFUpload(e) {
-    const file = e.target.files?.[0]
-    if (!file || !eventoId) { showToast('Selecciona un evento primero', 'error'); return }
-    if (file.type !== 'application/pdf') { showToast('Solo se aceptan archivos PDF', 'error'); return }
+    const files = Array.from(e.target.files || [])
+    if (!files.length || !eventoId) { showToast('Selecciona un evento primero', 'error'); return }
+    const pdfs = files.filter(f => f.type === 'application/pdf')
+    if (!pdfs.length) { showToast('Solo se aceptan archivos PDF', 'error'); return }
 
     setUploading(true)
-    setUploadProgress({ current: 0, total: 0, step: 'Leyendo PDF...' })
+    setUploadProgress({ current: 0, total: pdfs.length, step: `Subiendo ${pdfs.length} tickets...` })
 
     try {
-      // Extract QRs from PDF
-      const extracted = await extractQRsFromPDF(file, (current, total) => {
-        setUploadProgress({ current, total, step: `Procesando página ${current} de ${total}...` })
-      })
-
-      if (extracted.length === 0) {
-        showToast('No se encontraron códigos QR en el PDF', 'error')
-        setUploading(false)
-        pdfRef.current.value = ''
-        return
-      }
-
-      setUploadProgress({ current: 0, total: extracted.length, step: `Subiendo ${extracted.length} QRs...` })
-
       let saved = 0
-      for (const qr of extracted) {
-        // Check for duplicate qr_id in this evento
-        const { data: existing } = await supabase
-          .from('qr_codes')
-          .select('id')
-          .eq('evento_id', eventoId)
-          .eq('qr_id', qr.qr_id)
-          .single()
+      for (let i = 0; i < pdfs.length; i++) {
+        const file = pdfs[i]
+        const baseName = file.name.replace(/\.pdf$/i, '').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 60)
+        const qrId = `${baseName}_${Date.now().toString(36)}_${i}`
 
-        if (existing) { saved++; setUploadProgress(p => ({ ...p, current: saved })); continue }
+        setUploadProgress({ current: saved, total: pdfs.length, step: `Subiendo ${file.name}...` })
 
-        // Upload image to storage
-        const blob = dataURLToBlob(qr.imageDataUrl)
-        const path = `${eventoId}/qr_${qr.qr_id.replace(/[^a-zA-Z0-9]/g, '_')}.png`
-        let imageUrl = null
+        const path = `${eventoId}/${qrId}.pdf`
+        const { error: uploadErr } = await supabase.storage
+          .from('tickets')
+          .upload(path, file, { contentType: 'application/pdf', upsert: true })
 
-        const { error: uploadErr } = await supabase.storage.from('qr-images').upload(path, blob, { contentType: 'image/png', upsert: true })
-        if (!uploadErr) {
-          const { data: urlData } = supabase.storage.from('qr-images').getPublicUrl(path)
-          imageUrl = urlData?.publicUrl || null
+        if (uploadErr) {
+          console.error('Upload error:', uploadErr)
+          showToast(`Error subiendo ${file.name}: ${uploadErr.message}`, 'error')
+          continue
         }
 
-        // Insert QR record
-        await supabase.from('qr_codes').insert({
+        const { data: urlData } = supabase.storage.from('tickets').getPublicUrl(path)
+        const pdfUrl = urlData?.publicUrl || null
+
+        const { error: insertErr } = await supabase.from('qr_codes').insert({
           evento_id:     eventoId,
-          qr_id:         qr.qr_id,
-          qr_image_url:  imageUrl,
+          qr_id:         qrId,
+          ticket_pdf_url: pdfUrl,
           estado:        'bloqueado',
         })
 
+        if (insertErr) {
+          console.error('Insert error:', insertErr)
+          showToast(`Error guardando ${file.name}: ${insertErr.message}`, 'error')
+          continue
+        }
+
         saved++
-        setUploadProgress(p => ({ ...p, current: saved, step: `Guardando QR ${saved} de ${extracted.length}...` }))
+        setUploadProgress({ current: saved, total: pdfs.length, step: `Guardado ${saved} de ${pdfs.length}...` })
       }
 
-      showToast(`✓ ${saved} QRs subidos correctamente`)
+      showToast(`✓ ${saved} tickets subidos correctamente`)
       loadQRs()
     } catch (err) {
       console.error(err)
-      showToast('Error procesando el PDF: ' + err.message, 'error')
+      showToast('Error procesando los PDFs: ' + err.message, 'error')
     }
 
     setUploading(false)
@@ -171,9 +161,9 @@ export default function AdminQRCodes() {
               {eventos.map(ev => <option key={ev.id} value={ev.id}>{ev.nombre}</option>)}
             </select>
           )}
-          <input ref={pdfRef} type="file" accept="application/pdf" className="hidden" onChange={handlePDFUpload} />
+          <input ref={pdfRef} type="file" accept="application/pdf" multiple className="hidden" onChange={handlePDFUpload} />
           <button onClick={() => pdfRef.current?.click()} disabled={uploading} className="btn-secondary text-sm">
-            <Upload size={14} /> Subir PDF
+            <Upload size={14} /> Subir PDFs
           </button>
           <button onClick={() => setShowAssign(true)} disabled={counts.sinAsignar === 0} className="btn-primary text-sm">
             <Users size={14} /> Asignar QRs
@@ -239,9 +229,9 @@ export default function AdminQRCodes() {
         {loading ? (
           <div className="flex justify-center py-16"><Spinner size="lg" /></div>
         ) : qrs.length === 0 ? (
-          <EmptyState icon="🔲" title={uploading ? 'Procesando...' : 'Sin QRs cargados'}
-            description={uploading ? '' : 'Sube un PDF con los códigos QR del evento'}
-            action={!uploading && <button onClick={() => pdfRef.current?.click()} className="btn-primary"><Upload size={14} />Subir PDF</button>} />
+          <EmptyState icon="🎟" title={uploading ? 'Procesando...' : 'Sin tickets cargados'}
+            description={uploading ? '' : 'Sube los PDFs de los tickets del evento (puedes seleccionar varios)'}
+            action={!uploading && <button onClick={() => pdfRef.current?.click()} className="btn-primary"><Upload size={14} />Subir PDFs</button>} />
         ) : (
           <>
             {/* Group by vendedor */}
@@ -261,20 +251,16 @@ export default function AdminQRCodes() {
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-3">
                     {group.items.map(qr => (
                       <div key={qr.id} className="glass-card-light p-3 flex flex-col items-center gap-2">
-                        <div className="relative w-full aspect-square max-w-[100px] rounded-lg overflow-hidden bg-white">
-                          {qr.qr_image_url ? (
-                            <img src={qr.qr_image_url} alt={qr.qr_id}
-                              className={clsx('w-full h-full object-contain', qr.estado === 'bloqueado' ? 'qr-locked' : 'qr-unlocked')} />
-                          ) : (
-                            <div className="w-full h-full flex items-center justify-center bg-brand-surface"><QrCode size={24} className="text-brand-subtle" /></div>
-                          )}
+                        <a href={qr.ticket_pdf_url || '#'} target="_blank" rel="noopener noreferrer"
+                           className="relative w-full aspect-square max-w-[100px] rounded-lg overflow-hidden bg-brand-surface flex items-center justify-center">
+                          <FileText size={36} className={qr.estado === 'bloqueado' ? 'text-brand-subtle' : 'text-brand-violet'} />
                           {qr.estado === 'bloqueado' && (
                             <div className="absolute inset-0 flex items-center justify-center" style={{ background: 'rgba(10,10,15,0.4)' }}>
                               <span className="text-white text-lg">🔒</span>
                             </div>
                           )}
-                        </div>
-                        <p className="text-[9px] font-mono text-brand-subtle truncate w-full text-center">{qr.qr_id.slice(0, 12)}...</p>
+                        </a>
+                        <p className="text-[9px] font-mono text-brand-subtle truncate w-full text-center">{qr.qr_id.slice(0, 14)}...</p>
                         <Badge estado={qr.estado} className="text-[9px] px-1.5 py-0.5" />
                       </div>
                     ))}
