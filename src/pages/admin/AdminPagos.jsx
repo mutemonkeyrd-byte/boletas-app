@@ -32,10 +32,11 @@ export default function AdminPagos() {
   async function load() {
     setLoading(true)
     let q = supabase.from('pagos')
-      .select('*, profiles(nombre_completo,telefono), eventos(nombre)')
+      .select('*, profiles!pagos_vendedor_id_fkey(nombre_completo,telefono), eventos(nombre)')
       .order('fecha_reporte', { ascending: false })
     if (filter) q = q.eq('estado', filter)
-    const { data } = await q
+    const { data, error } = await q
+    if (error) console.error('Error loading pagos:', error)
     setPagos(data || [])
     setLoading(false)
   }
