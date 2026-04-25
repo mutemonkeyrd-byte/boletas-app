@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../../lib/supabase'
 import { fmtDate } from '../../lib/utils'
 import { Card, CardHeader, Badge, QRCard, Modal, Field, EmptyState, Spinner, showToast } from '../../components/shared/UI'
-import { Upload, QrCode, Plus, RefreshCw, Users, FileText } from 'lucide-react'
+import { Upload, QrCode, Plus, RefreshCw, Users, FileText, Trash2 } from 'lucide-react'
 import clsx from 'clsx'
 
 export default function AdminQRCodes() {
@@ -103,6 +103,60 @@ export default function AdminQRCodes() {
     setUploadProgress({ current: 0, total: 0, step: '' })
   }
 
+  async function handleDelete(qr) {
+    const confirmMsg = qr.estado === 'bloqueado'
+      ? `¿Eliminar el ticket "${qr.qr_id}"?\n\nEsta acción no se puede deshacer.`
+      : `⚠️ El ticket "${qr.qr_id}" está en estado "${qr.estado}".\n\n¿Eliminarlo de todas formas? También se borrarán los pagos relacionados. Esta acción no se puede deshacer.`
+    if (!window.confirm(confirmMsg)) return
+
+    try {
+      // Delete pagos that reference this qr_id (qr_ids is text[])
+      await supabase.from('pagos').delete().contains('qr_ids', [qr.qr_id]).eq('evento_id', qr.evento_id)
+
+      // Delete the QR row
+      const { error: delErr } = await supabase.from('qr_codes').delete().eq('id', qr.id)
+      if (delErr) { showToast('Error al eliminar: ' + delErr.message, 'error'); return }
+
+      // Try to remove the PDF from storage (best-effort)
+      if (qr.ticket_pdf_url) {
+        const path = qr.ticket_pdf_url.split('/storage/v1/object/public/tickets/')[1]
+        if (path) await supabase.storage.from('tickets').remove([path])
+      }
+
+      showToast('✓ Ticket eliminado', 'success')
+      loadQRs()
+    } catch (err) {
+      console.error(err)
+      showToast('Error al eliminar', 'error')
+    }
+  }
+
+  async function handleDeleteAll() {
+    const total = qrs.length
+    if (!total) return
+    if (!window.confirm(`⚠️ Eliminar TODOS los ${total} tickets de este evento?\n\nIncluye pagos relacionados. Esta acción no se puede deshacer.`)) return
+    if (!window.confirm(`Confirma una vez más: ¿borrar definitivamente ${total} tickets?`)) return
+
+    setUploading(true)
+    setUploadProgress({ current: 0, total, step: 'Eliminando...' })
+    try {
+      // Delete all pagos for this evento
+      await supabase.from('pagos').delete().eq('evento_id', eventoId)
+      // Delete all qr_codes for this evento
+      await supabase.from('qr_codes').delete().eq('evento_id', eventoId)
+      // Best-effort storage cleanup
+      const paths = qrs.filter(q => q.ticket_pdf_url).map(q => q.ticket_pdf_url.split('/storage/v1/object/public/tickets/')[1]).filter(Boolean)
+      if (paths.length) await supabase.storage.from('tickets').remove(paths)
+      showToast(`✓ ${total} tickets eliminados`, 'success')
+      loadQRs()
+    } catch (err) {
+      console.error(err)
+      showToast('Error al eliminar', 'error')
+    }
+    setUploading(false)
+    setUploadProgress({ current: 0, total: 0, step: '' })
+  }
+
   async function handleAsignar() {
     if (!assignForm.vendedor_id || !assignForm.cantidad) { showToast('Completa todos los campos', 'error'); return }
     const cantidad = parseInt(assignForm.cantidad)
@@ -168,6 +222,14 @@ export default function AdminQRCodes() {
           <button onClick={() => setShowAssign(true)} disabled={counts.sinAsignar === 0} className="btn-primary text-sm">
             <Users size={14} /> Asignar QRs
           </button>
+          {qrs.length > 0 && (
+            <button onClick={handleDeleteAll} disabled={uploading}
+              title="Borrar todos los tickets de este evento"
+              className="text-sm py-2 px-3 rounded-xl font-semibold transition-all active:scale-95"
+              style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', color: '#EF4444' }}>
+              <Trash2 size={13} className="inline mr-1" /> Borrar todos
+            </button>
+          )}
         </div>
       </div>
 
@@ -250,7 +312,13 @@ export default function AdminQRCodes() {
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-3">
                     {group.items.map(qr => (
-                      <div key={qr.id} className="glass-card-light p-3 flex flex-col items-center gap-2">
+                      <div key={qr.id} className="glass-card-light p-3 flex flex-col items-center gap-2 relative group">
+                        <button onClick={() => handleDelete(qr)}
+                          title="Eliminar ticket"
+                          className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all z-10"
+                          style={{ background: 'rgba(239,68,68,0.85)', color: 'white' }}>
+                          <Trash2 size={11} />
+                        </button>
                         <a href={qr.ticket_pdf_url || '#'} target="_blank" rel="noopener noreferrer"
                            className="relative w-full aspect-square max-w-[100px] rounded-lg overflow-hidden bg-brand-surface flex items-center justify-center">
                           <FileText size={36} className={qr.estado === 'bloqueado' ? 'text-brand-subtle' : 'text-brand-violet'} />
