@@ -20,6 +20,15 @@ export default function AdminPagos() {
 
   useEffect(() => { load() }, [filter])
 
+  // Realtime: refresh when pagos table changes
+  useEffect(() => {
+    const ch = supabase.channel('admin-pagos-rt')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pagos' }, load)
+      .subscribe()
+    return () => supabase.removeChannel(ch)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filter])
+
   async function load() {
     setLoading(true)
     let q = supabase.from('pagos')
