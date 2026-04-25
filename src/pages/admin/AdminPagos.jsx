@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { useAuth } from '../../context/AuthContext'
-import { fmtMoney, fmtDate, fmtDateTime } from '../../lib/utils'
+import { fmtMoney, fmtDate, fmtDateTime, comisionPorQR, depositoPorQR } from '../../lib/utils'
 import { syncPago } from '../../lib/sheets'
 import { Card, Badge, Avatar, InfoRow, EmptyState, Spinner, showToast } from '../../components/shared/UI'
-import { CheckCircle, XCircle, ZoomIn } from 'lucide-react'
+import { CheckCircle, XCircle, ZoomIn, AlertTriangle } from 'lucide-react'
 import clsx from 'clsx'
 
 export default function AdminPagos() {
@@ -32,7 +32,7 @@ export default function AdminPagos() {
   async function load() {
     setLoading(true)
     let q = supabase.from('pagos')
-      .select('*, profiles!pagos_vendedor_id_fkey(nombre_completo,telefono), eventos(nombre)')
+      .select('*, profiles!pagos_vendedor_id_fkey(nombre_completo,telefono), eventos(nombre,precio_boleta,comision_tipo,comision_valor)')
       .order('fecha_reporte', { ascending: false })
     if (filter) q = q.eq('estado', filter)
     const { data, error } = await q
@@ -157,18 +157,78 @@ export default function AdminPagos() {
               </div>
 
               <InfoRow label="Vendedor" value={selected.profiles?.nombre_completo} />
-              <InfoRow label="Monto" value={<span className="text-brand-violet font-bold">{fmtMoney(selected.monto)}</span>} />
+              <InfoRow label="Evento" value={selected.eventos?.nombre} />
+              <InfoRow label="Tickets" value={`${(selected.qr_ids || []).length}`} />
               <InfoRow label="Banco" value={selected.banco_destino} />
-              <InfoRow label="QRs" value={
-                <div className="flex flex-wrap gap-1 justify-end">
-                  {(selected.qr_ids || []).map((id, i) => (
+              <InfoRow label="Fecha" value={fmtDateTime(selected.fecha_reporte)} />
+
+              {/* Math breakdown — Expected vs Reported */}
+              {(() => {
+                const ev = selected.eventos
+                const cnt = (selected.qr_ids || []).length
+                const precio = Number(ev?.precio_boleta || 0)
+                const comUnit = comisionPorQR(ev)
+                const depUnit = depositoPorQR(ev)
+                const totalCobrado = cnt * precio
+                const totalComision = cnt * comUnit
+                const esperado = cnt * depUnit
+                const reportado = Number(selected.monto)
+                const diff = reportado - esperado
+                if (precio === 0) return (
+                  <InfoRow label="Monto" value={<span className="text-brand-violet font-bold">{fmtMoney(reportado)}</span>} />
+                )
+                return (
+                  <div className="mt-3 rounded-xl p-3"
+                    style={{
+                      background: diff === 0 ? 'rgba(16,185,129,0.08)' : 'rgba(245,158,11,0.08)',
+                      border: `1px solid ${diff === 0 ? 'rgba(16,185,129,0.25)' : 'rgba(245,158,11,0.3)'}`
+                    }}>
+                    <p className="text-[10px] font-bold uppercase tracking-widest mb-2"
+                      style={{ color: diff === 0 ? '#10B981' : '#F59E0B' }}>
+                      {diff === 0 ? '✓ Cuadre correcto' : diff > 0 ? '⚠️ Pagó de más' : '⚠️ Pagó de menos'}
+                    </p>
+                    <div className="space-y-1 text-xs">
+                      <div className="flex justify-between">
+                        <span className="text-brand-muted">{cnt} ticket{cnt !== 1 ? 's' : ''} × {fmtMoney(precio)}</span>
+                        <span className="text-brand-text font-semibold">{fmtMoney(totalCobrado)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-brand-muted">– Comisión vendedor</span>
+                        <span className="text-brand-cyan font-semibold">{fmtMoney(totalComision)}</span>
+                      </div>
+                      <div className="border-t border-brand-border/40 pt-1 mt-1 flex justify-between">
+                        <span className="text-brand-text font-semibold">Esperado</span>
+                        <span className="font-bold text-brand-text">{fmtMoney(esperado)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-brand-muted">Reportado</span>
+                        <span className={clsx('font-bold', diff === 0 ? 'text-brand-green' : 'text-brand-orange')}>{fmtMoney(reportado)}</span>
+                      </div>
+                      {diff !== 0 && (
+                        <div className="flex justify-between pt-1 border-t border-brand-border/40 mt-1">
+                          <span className="text-brand-muted">Diferencia</span>
+                          <span className="font-bold" style={{ color: diff > 0 ? '#10B981' : '#EF4444' }}>
+                            {diff > 0 ? '+' : ''}{fmtMoney(diff)}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )
+              })()}
+
+              <InfoRow label="QR IDs" value={
+                <div className="flex flex-wrap gap-1 justify-end max-w-[180px]">
+                  {(selected.qr_ids || []).slice(0, 6).map((id, i) => (
                     <span key={i} className="text-[9px] font-mono px-1.5 py-0.5 rounded" style={{ background: 'rgba(124,58,237,0.15)', color: '#8B5CF6' }}>
                       {String(id).slice(0, 8)}
                     </span>
                   ))}
+                  {(selected.qr_ids || []).length > 6 && (
+                    <span className="text-[9px] text-brand-subtle">+{selected.qr_ids.length - 6}</span>
+                  )}
                 </div>
               } />
-              <InfoRow label="Fecha" value={fmtDateTime(selected.fecha_reporte)} />
 
               {selected.estado === 'pendiente' && (
                 <>

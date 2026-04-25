@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { supabase } from '../../lib/supabase'
-import { fmtMoney, fmtDate, calcComision } from '../../lib/utils'
+import { fmtMoney, fmtDate, comisionPorQR, depositoPorQR } from '../../lib/utils'
 import { Badge, ProgressBar, Spinner, EmptyState } from '../../components/shared/UI'
+import clsx from 'clsx'
 
 export default function VendorBalance() {
   const { profile } = useAuth()
@@ -20,63 +21,87 @@ export default function VendorBalance() {
     const q = qrs.data || [], p = pagos.data || []
 
     const asignados  = q.length
+    const desbloqueados = q.filter(x => x.estado === 'desbloqueado').length
     const vendidos   = q.filter(x => ['vendido','entregado'].includes(x.estado)).length
     const cobrado    = p.filter(x => x.estado === 'aprobado').reduce((s, x) => s + Number(x.monto), 0)
     const pendiente  = p.filter(x => x.estado === 'pendiente').reduce((s, x) => s + Number(x.monto), 0)
 
-    // Comisión total ganada
+    // Por evento + totales
     let comisionTotal = 0
+    let depositoEsperadoTotal = 0
     const eventoIds = [...new Set(q.map(x => x.evento_id))]
-    eventoIds.forEach(eid => {
-      const ev = evs.data?.find(e => e.id === eid)
-      if (!ev) return
-      const vendidosEv = q.filter(x => x.evento_id === eid && ['vendido','entregado'].includes(x.estado)).length
-      const pagosCobradosEv = p.filter(x => x.evento_id === eid && x.estado === 'aprobado').reduce((s, x) => s + Number(x.monto), 0)
-      if (ev.comision_tipo === 'fijo') comisionTotal += vendidosEv * (ev.comision_valor || 0)
-      else if (ev.comision_tipo === 'porcentaje') comisionTotal += Math.round(pagosCobradosEv * ev.comision_valor / 100)
-    })
-
-    // Por evento
     const porEvento = eventoIds.map(eid => {
       const ev = evs.data?.find(e => e.id === eid)
       const mis = q.filter(x => x.evento_id === eid)
       const misPagos = p.filter(x => x.evento_id === eid)
-      const vend = mis.filter(x => ['vendido','entregado'].includes(x.estado)).length
+      const desblQR = mis.filter(x => x.estado === 'desbloqueado').length
+      const vend = mis.filter(x => x.estado === 'vendido').length
+      const entregados = mis.filter(x => x.estado === 'entregado').length
+      const realizados = desblQR + vend + entregados
       const cob = misPagos.filter(x => x.estado === 'aprobado').reduce((s, x) => s + Number(x.monto), 0)
-      let com = 0
-      if (ev?.comision_tipo === 'fijo') com = vend * (ev.comision_valor || 0)
-      else if (ev?.comision_tipo === 'porcentaje') com = Math.round(cob * (ev?.comision_valor || 0) / 100)
-      return { nombre: ev?.nombre || 'Evento', asignados: mis.length, vendidos: vend, cobrado: cob, comision: com }
+      const pen = misPagos.filter(x => x.estado === 'pendiente').reduce((s, x) => s + Number(x.monto), 0)
+
+      const comisionUnit = comisionPorQR(ev)
+      const depositoUnit = depositoPorQR(ev)
+      const com = realizados * comisionUnit
+      const depositoEsp = realizados * depositoUnit
+      const debe = Math.max(0, depositoEsp - cob - pen)
+
+      comisionTotal += com
+      depositoEsperadoTotal += depositoEsp
+
+      return {
+        nombre: ev?.nombre || 'Evento',
+        asignados: mis.length,
+        vendidos: realizados,
+        precio: ev?.precio_boleta || 0,
+        comisionUnit,
+        depositoUnit,
+        cobrado: cob,
+        pendiente: pen,
+        depositoEsperado: depositoEsp,
+        debe,
+        comision: com,
+      }
     })
 
-    setData({ asignados, vendidos, cobrado, pendiente, comisionTotal, pagos: p, porEvento })
+    const porDepositar = Math.max(0, depositoEsperadoTotal - cobrado - pendiente)
+
+    setData({ asignados, vendidos, desbloqueados, cobrado, pendiente, porDepositar, depositoEsperadoTotal, comisionTotal, pagos: p, porEvento })
     setLoading(false)
   }
 
   if (loading) return <div className="flex justify-center py-16"><Spinner size="lg" /></div>
   if (!data) return <EmptyState icon="📊" title="Sin datos" />
 
-  const alDia = data.pendiente === 0
+  const alDia = data.porDepositar === 0 && data.pendiente === 0
 
   return (
     <div className="px-4 py-4">
       {/* Hero */}
       <div className="rounded-apple-xl p-5 text-white mb-4"
-        style={{ background: alDia ? 'linear-gradient(135deg,#10B981,#06B6D4)' : 'linear-gradient(135deg,#7C3AED,#3B82F6)' }}>
-        <p className="text-[10px] font-semibold opacity-70 uppercase tracking-widest mb-1">Balance total</p>
-        <p className="text-[38px] font-bold tracking-tight leading-none">{fmtMoney(data.cobrado)}</p>
-        <p className="text-sm opacity-75 mt-1">cobrado y aprobado</p>
-        <div className="mt-4 flex justify-between text-sm">
+        style={{ background: alDia ? 'linear-gradient(135deg,#10B981,#06B6D4)' : data.porDepositar > 0 ? 'linear-gradient(135deg,#F59E0B,#EF4444)' : 'linear-gradient(135deg,#7C3AED,#3B82F6)' }}>
+        <p className="text-[10px] font-semibold opacity-70 uppercase tracking-widest mb-1">{data.porDepositar > 0 ? 'Debes depositar' : 'Balance total'}</p>
+        <p className="text-[38px] font-bold tracking-tight leading-none">{fmtMoney(data.porDepositar > 0 ? data.porDepositar : data.cobrado)}</p>
+        <p className="text-sm opacity-75 mt-1">{data.porDepositar > 0 ? 'pendiente al admin' : 'cobrado y aprobado'}</p>
+        <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
           <div>
-            <p className="opacity-65 text-[11px]">En revisión</p>
+            <p className="opacity-65 text-[10px]">Aprobado</p>
+            <p className="font-semibold">{fmtMoney(data.cobrado)}</p>
+          </div>
+          <div>
+            <p className="opacity-65 text-[10px]">En revisión</p>
             <p className="font-semibold">{fmtMoney(data.pendiente)}</p>
           </div>
           <div>
-            <p className="opacity-65 text-[11px]">Comisión ganada</p>
+            <p className="opacity-65 text-[10px]">Comisión</p>
             <p className="font-semibold">{fmtMoney(data.comisionTotal)}</p>
           </div>
-          <div className="self-end px-3 py-1 rounded-full text-[11px] font-bold" style={{ background: 'rgba(255,255,255,0.2)' }}>
-            {alDia ? '✓ Al día' : `${data.pagos.filter(p => p.estado === 'pendiente').length} pend.`}
+        </div>
+        <div className="mt-3 flex items-center justify-between">
+          <span className="text-[11px] opacity-70">{data.vendidos} ticket{data.vendidos !== 1 ? 's' : ''} vendido{data.vendidos !== 1 ? 's' : ''}</span>
+          <div className="px-3 py-1 rounded-full text-[11px] font-bold" style={{ background: 'rgba(255,255,255,0.2)' }}>
+            {alDia ? '✓ Al día' : data.porDepositar > 0 ? '⚠️ Reporta pago' : `${data.pagos.filter(p => p.estado === 'pendiente').length} pend.`}
           </div>
         </div>
       </div>
@@ -84,7 +109,10 @@ export default function VendorBalance() {
       {/* Per event */}
       {data.porEvento.map(ev => (
         <div key={ev.nombre} className="glass-card-light p-4 mb-3">
-          <p className="font-semibold text-sm text-brand-text mb-3">🎟 {ev.nombre}</p>
+          <div className="flex items-center justify-between mb-3">
+            <p className="font-semibold text-sm text-brand-text">🎟 {ev.nombre}</p>
+            <span className="text-[10px] text-brand-subtle">{fmtMoney(ev.precio)}/ticket</span>
+          </div>
           {[
             { l: 'Asignados', v: ev.asignados, max: ev.asignados, c: 'bg-brand-purple' },
             { l: 'Vendidos',  v: ev.vendidos,  max: ev.asignados, c: 'bg-gradient-to-r from-brand-purple to-brand-blue' },
@@ -97,10 +125,18 @@ export default function VendorBalance() {
               <ProgressBar value={row.v} max={row.max || 1} color={row.c} />
             </div>
           ))}
-          <div className="mt-3 pt-3 border-t border-brand-border/30 flex justify-between text-sm">
-            <div><span className="text-brand-muted">Cobrado</span><span className="font-bold text-brand-green ml-2">{fmtMoney(ev.cobrado)}</span></div>
-            {ev.comision > 0 && <div><span className="text-brand-muted">Comisión</span><span className="font-bold text-brand-cyan ml-2">{fmtMoney(ev.comision)}</span></div>}
+          <div className="mt-3 pt-3 border-t border-brand-border/30 grid grid-cols-2 gap-2 text-xs">
+            <div><span className="text-brand-muted block">Esperado</span><span className="font-bold text-brand-text">{fmtMoney(ev.depositoEsperado)}</span></div>
+            <div><span className="text-brand-muted block">Cobrado</span><span className="font-bold text-brand-green">{fmtMoney(ev.cobrado)}</span></div>
+            {ev.pendiente > 0 && <div><span className="text-brand-muted block">En revisión</span><span className="font-bold text-brand-orange">{fmtMoney(ev.pendiente)}</span></div>}
+            {ev.comision > 0 && <div><span className="text-brand-muted block">Comisión</span><span className="font-bold text-brand-cyan">{fmtMoney(ev.comision)}</span></div>}
           </div>
+          {ev.debe > 0 && (
+            <div className="mt-2 rounded-xl p-2 text-center text-xs font-semibold"
+              style={{ background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', color: '#F59E0B' }}>
+              ⚠️ Debes depositar {fmtMoney(ev.debe)} más al admin
+            </div>
+          )}
         </div>
       ))}
 

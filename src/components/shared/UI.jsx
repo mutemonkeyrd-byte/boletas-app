@@ -1,6 +1,6 @@
 import clsx from 'clsx'
 import { X, Lock, Unlock, AlertTriangle } from 'lucide-react'
-import { avatarGradient, initials } from '../../lib/utils'
+import { avatarGradient, initials, fmtMoney, comisionPorQR, depositoPorQR } from '../../lib/utils'
 
 // ── AVATAR ────────────────────────────────────────────────
 export function Avatar({ name, size = 'md', className }) {
@@ -136,8 +136,11 @@ export function Modal({ open, onClose, title, children, size = 'md', danger }) {
 }
 
 // ── WARNING MODAL (for QR unlock) ─────────────────────────
-export function UnlockWarningModal({ open, onClose, onConfirm, qrIndex }) {
+export function UnlockWarningModal({ open, onClose, onConfirm, qrIndex, evento }) {
   if (!open) return null
+  const precio   = Number(evento?.precio_boleta || 0)
+  const comision = comisionPorQR(evento)
+  const deposito = depositoPorQR(evento)
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 fade-in">
       <div className="absolute inset-0 bg-black/70 backdrop-blur-md" onClick={onClose} />
@@ -151,9 +154,31 @@ export function UnlockWarningModal({ open, onClose, onConfirm, qrIndex }) {
 
           <h3 className="text-[18px] font-bold text-brand-text mb-2">¿Tienes un comprador?</h3>
           <p className="text-sm text-brand-muted mb-4 leading-relaxed">
-            Al desbloquear este QR quedará <span className="text-brand-orange font-semibold">activo e irrevocable</span>.
+            Al desbloquear este ticket quedará <span className="text-brand-orange font-semibold">activo e irrevocable</span>.
             Es tu responsabilidad entregarlo al cliente.
           </p>
+
+          {/* Money breakdown */}
+          {precio > 0 && (
+            <div className="rounded-xl p-3 mb-3 text-left"
+              style={{ background: 'rgba(124,58,237,0.08)', border: '1px solid rgba(124,58,237,0.25)' }}>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-brand-violet mb-2 text-center">💰 Dinero de este ticket</p>
+              <div className="space-y-1 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-brand-muted">Cobras al cliente</span>
+                  <span className="font-bold text-brand-text">{fmtMoney(precio)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-brand-muted">Tu comisión</span>
+                  <span className="font-bold text-brand-cyan">{fmtMoney(comision)}</span>
+                </div>
+                <div className="border-t border-brand-border/40 pt-1 mt-1 flex justify-between">
+                  <span className="text-brand-text font-semibold">Depositas al admin</span>
+                  <span className="font-bold text-brand-green">{fmtMoney(deposito)}</span>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Warning box */}
           <div className="rounded-xl p-3 mb-5 text-left"

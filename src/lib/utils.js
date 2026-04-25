@@ -55,3 +55,29 @@ export const calcComision = (precioVenta, comisionConfig) => {
   }
   return comisionConfig.valor || 0
 }
+
+// ── COMMISSION / DEPOSIT MATH ─────────────────────────────
+// Vendor charges client `precio_boleta`, keeps `comisionPorQR` as commission,
+// deposits `depositoPorQR` to admin.
+
+export const comisionPorQR = (evento) => {
+  if (!evento || !evento.precio_boleta) return 0
+  const tipo  = evento.comision_tipo
+  const valor = Number(evento.comision_valor) || 0
+  if (!valor) return 0
+  if (tipo === 'porcentaje') return Math.round(Number(evento.precio_boleta) * valor / 100)
+  return valor
+}
+
+export const depositoPorQR = (evento) => {
+  if (!evento || !evento.precio_boleta) return 0
+  return Number(evento.precio_boleta) - comisionPorQR(evento)
+}
+
+export const depositoEsperado = (cantidadQRs, evento) => {
+  return Number(cantidadQRs || 0) * depositoPorQR(evento)
+}
+
+export const comisionEsperada = (cantidadQRs, evento) => {
+  return Number(cantidadQRs || 0) * comisionPorQR(evento)
+}

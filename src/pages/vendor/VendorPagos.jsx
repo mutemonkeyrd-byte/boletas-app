@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import { supabase } from '../../lib/supabase'
 import { syncPago } from '../../lib/sheets'
-import { fmtMoney, fmtDate } from '../../lib/utils'
+import { fmtMoney, fmtDate, comisionPorQR, depositoPorQR, depositoEsperado, comisionEsperada } from '../../lib/utils'
 import { Badge, EmptyState, Spinner, showToast } from '../../components/shared/UI'
 import { Camera, X, ChevronLeft, AlertCircle } from 'lucide-react'
 import clsx from 'clsx'
@@ -40,11 +40,28 @@ export default function VendorPagos() {
     setLoading(false)
   }
 
-  const cuentasEvento = eventos.find(e => e.id === eventoId)?.cuentas_bancarias || []
+  const eventoActual  = eventos.find(e => e.id === eventoId)
+  const cuentasEvento = eventoActual?.cuentas_bancarias || []
   const qrsDelEvento  = qrsActivos.filter(q => q.evento_id === eventoId)
 
+  // Math: precio del cliente, comisión, depósito esperado
+  const eventoQR     = qrsDelEvento[0]?.eventos || eventoActual
+  const precioUnit   = Number(eventoQR?.precio_boleta || 0)
+  const comisionUnit = comisionPorQR(eventoQR)
+  const depositoUnit = depositoPorQR(eventoQR)
+  const totalCobrado    = selQRs.length * precioUnit
+  const totalComision   = selQRs.length * comisionUnit
+  const totalDepositoEsp = selQRs.length * depositoUnit
+
   function toggleQR(id) {
-    setSelQRs(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+    setSelQRs(prev => {
+      const next = prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]
+      // Auto-fill monto with expected deposit
+      const dep = next.length * depositoUnit
+      if (dep > 0) setMonto(String(dep))
+      else setMonto('')
+      return next
+    })
   }
 
   function handleFile(e) {
@@ -108,30 +125,58 @@ export default function VendorPagos() {
 
       {/* QR selection */}
       <div className="glass-card-light p-4 mb-3">
-        <p className="label-dark">QRs activos a incluir ({selQRs.length} seleccionados)</p>
+        <p className="label-dark">Tickets activos a incluir ({selQRs.length} seleccionados)</p>
         {qrsDelEvento.length === 0
-          ? <p className="text-sm text-brand-muted text-center py-2">No tienes QRs activos en este evento</p>
+          ? <p className="text-sm text-brand-muted text-center py-2">No tienes tickets activos en este evento</p>
           : <div className="flex flex-wrap gap-2">
             {qrsDelEvento.map(qr => (
               <button key={qr.id} onClick={() => toggleQR(qr.id)}
                 className={clsx('px-3 py-1.5 rounded-xl text-xs font-bold transition-all border-2',
                   selQRs.includes(qr.id) ? 'text-white border-brand-violet' : 'text-brand-muted border-brand-border')}
                 style={selQRs.includes(qr.id) ? { background: 'linear-gradient(135deg,#7C3AED,#3B82F6)' } : { background: 'rgba(30,30,46,0.5)' }}>
-                {qr.qr_id.slice(0, 8)}...
+                {qr.qr_id.slice(0, 12)}...
               </button>
             ))}
           </div>
         }
       </div>
 
+      {/* Breakdown */}
+      {selQRs.length > 0 && precioUnit > 0 && (
+        <div className="rounded-xl p-4 mb-3"
+          style={{ background: 'linear-gradient(135deg,rgba(124,58,237,0.08),rgba(59,130,246,0.05))', border: '1px solid rgba(124,58,237,0.25)' }}>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-brand-violet mb-3">📊 Cálculo del depósito</p>
+          <div className="space-y-1.5 text-xs">
+            <div className="flex justify-between">
+              <span className="text-brand-muted">{selQRs.length} ticket{selQRs.length !== 1 ? 's' : ''} × {fmtMoney(precioUnit)}</span>
+              <span className="text-brand-text font-semibold">{fmtMoney(totalCobrado)}</span>
+            </div>
+            <div className="flex justify-between text-brand-cyan">
+              <span>– Tu comisión ({comisionUnit > 0 ? fmtMoney(comisionUnit) + '/ticket' : '0'})</span>
+              <span className="font-semibold">{fmtMoney(totalComision)}</span>
+            </div>
+            <div className="border-t border-brand-border/40 pt-1.5 mt-1.5 flex justify-between text-sm">
+              <span className="text-brand-text font-bold">Debes depositar</span>
+              <span className="font-bold text-brand-green">{fmtMoney(totalDepositoEsp)}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Monto */}
       <div className="glass-card-light p-4 mb-3">
-        <p className="label-dark">Monto transferido</p>
+        <p className="label-dark">Monto transferido al admin</p>
         <div className="relative">
           <span className="absolute left-4 top-1/2 -translate-y-1/2 text-brand-muted text-sm font-semibold">RD$</span>
           <input className="input-dark pl-12 text-lg font-bold" type="number" inputMode="numeric"
             placeholder="0" value={monto} onChange={e => setMonto(e.target.value)} />
         </div>
+        {selQRs.length > 0 && totalDepositoEsp > 0 && Number(monto) !== totalDepositoEsp && (
+          <p className="text-[11px] mt-2 font-semibold"
+            style={{ color: Number(monto) > totalDepositoEsp ? '#F59E0B' : '#EF4444' }}>
+            ⚠️ Debes depositar {fmtMoney(totalDepositoEsp)} (estás reportando {fmtMoney(Number(monto) || 0)})
+          </p>
+        )}
       </div>
 
       {/* Banco */}

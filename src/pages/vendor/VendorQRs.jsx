@@ -242,6 +242,7 @@ export default function VendorQRs() {
       {/* Unlock warning modal */}
       <UnlockWarningModal
         open={warningOpen}
+        evento={selectedQR?.eventos || ev}
         onClose={() => { setWarningOpen(false); setSelectedQR(null) }}
         onConfirm={confirmUnlock}
       />
